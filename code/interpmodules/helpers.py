@@ -476,7 +476,7 @@ def _get_empirical_variogram(x,D,nh,h_bounds=0):
 
 
 
-def get_empirical_variogram_fast(x,X,D,nh,h_bounds='auto', method='euclidean'):
+def get_empirical_variogram_fast(x,X,D,nh,max_lag=None, h_bounds='auto', method='euclidean'):
     '''
     calculate the empirical variogram from
     data `x` with coordinates `X`
@@ -489,7 +489,8 @@ def get_empirical_variogram_fast(x,X,D,nh,h_bounds='auto', method='euclidean'):
 
     from scipy.sparse import coo_matrix
 
-    max_lag = np.nanmax(D)
+    if max_lag == None: 
+        max_lag = np.nanmax(D)
     
     if method == 'euclidean':
         tree = KDTree(X)

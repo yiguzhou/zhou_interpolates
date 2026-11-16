@@ -79,3 +79,6 @@ def show_colour_scheme(cmap, map_name):
 # MAIN COLOUR MAPS
 bpr,_ = three_colours_gradient(lo=plt.cm.Blues(0.7), mid=plt.cm.PuRd(0.4), hi=plt.cm.Oranges(0.6), plot=False)
 gnrd,_ = three_colours_gradient(lo=plt.cm.Blues(0.7), mid=plt.cm.YlOrBr(0.1), hi=plt.cm.Oranges(0.6), plot=False)
+
+eggshell = "#F0EAD6"
+

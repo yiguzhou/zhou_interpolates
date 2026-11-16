@@ -65,6 +65,6 @@ set_up_analysis = {"datasource": args.datasource, \
 
 
 for iter_id in range(niterations):
-    run_wrappers.run_one_iteration(
+    run_wrappers.rev_run_one_iteration(
             **set_up_analysis,
             curr_iter=iter_id)

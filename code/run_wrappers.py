@@ -51,13 +51,66 @@ def _get_compare_maptag(datasource, maptag):
         return f"hcps1200_meg{maptag.split('_')[0]}"
 
     
+def rev_generate_covariates(curr_map, all_sampling, src_polydata, trg_polydata, nspins=1000, datasource='grf'):
+    
+    from interpmodules import helpers
+    import copy
+    from neuromaps import nulls
+    import numpy as np
+    import random
+    from scipy.spatial import KDTree
+    from scipy.ndimage import gaussian_filter1d
+
+    ground_truth = src_polydata[curr_map]
+
+    kc, kv, uc, uv = all_sampling
+    
+    train = ground_truth[kv]
+    Yk0, yk1 = None, None
+    
+    if datasource in ['grf', 'microarray-pet'] + [ f"ieeg-{fband}-pet" for fband in fbands ]:
+        return generate_covariates(curr_map, src_polydata, trg_polydata, nspins, datasource)
+
+    
+    elif datasource == "neuromaps" :
+
+        # find top 5 correlates
+        #----------STEP 2.1. Build correlation matrix between maps-------------#
+        
+        other_maps = src_polydata.array_names
+
+        CMAT = np.ones(len(other_maps))
+
+        for j, other_map in enumerate(other_maps):
+            
+            if other_map == curr_map: continue
+
+            CMAT[j] = np.ma.corrcoef(np.ma.masked_invalid(src_polydata[curr_map][kv]), \
+                                np.ma.masked_invalid(src_polydata[other_map][kv]))[1,0]
+
+        
+        chosen_map_idx = abs(CMAT).argsort()
+        chosen_map_idx = chosen_map_idx[:-1]
+        top5_cov = np.array(other_maps)[chosen_map_idx][-5:]
+        print(curr_map)
+        print(top5_cov)
+        print(CMAT[chosen_map_idx[-5:]])
+
+        X_covariates = np.vstack([src_polydata[top5_cov_i] for top5_cov_i in top5_cov])
+        Yk0 = X_covariates
+
+        if trg_polydata == None: return Yk0
+        
+        yk1 = np.vstack([trg_polydata[top5_cov_i] for top5_cov_i in top5_cov])
+
+        return Yk0, yk1
+    return Yk0, yk1
 
     
 def generate_covariates(curr_map, src_polydata, trg_polydata, nspins=1000, datasource='grf'):
 
     '''
     currmap: `str` that indexes the polydata scalar array
-    polydata: 
     '''
     
     from interpmodules import helpers
@@ -163,7 +216,7 @@ def generate_covariates(curr_map, src_polydata, trg_polydata, nspins=1000, datas
 
 
 
-def run_one_iteration(datasource, curr_iter, \
+def rev_run_one_iteration(datasource, curr_iter, \
                       all_sampling, \
                       Yk0, \
                       yk1, \
@@ -189,7 +242,6 @@ def run_one_iteration(datasource, curr_iter, \
     """
 
     print(curr_iter)
-
 
     strategy = tags.get('strategy')
     percentage = tags.get('percentage')
@@ -245,6 +297,12 @@ def run_one_iteration(datasource, curr_iter, \
         unknown_coords = trg_polydata.points
         unknown_verts = np.arange(trg_polydata.n_points)
 
+    if datasource == "neuromaps":
+        Yk0, yk1 = rev_generate_covariates(curr_map="abagen_genepc1", 
+                                         all_sampling=(known_coords, known_verts, unknown_coords, unknown_verts), 
+                                         src_polydata=src_polydata, 
+                                         trg_polydata=trg_polydata,
+                                         datasource='neuromaps')
 
     if not usecase: benchmark = src_polydata[maptag][unknown_verts]
     
@@ -364,7 +422,7 @@ def run_one_iteration(datasource, curr_iter, \
         RETURN_INFO['interpolated']['regkrige'] = np.nan
         RUN_TIMES['krige'] = np.nan
         RUN_TIMES['regkrige'] = np.nan
-        if verbose: print(f"       >:(  00PS: could not fit a positive-variance ${cov_model} model !!       ")
+        if verbose: print(f"       >:(  Warning: could not fit a positive-variance ${cov_model} model !!       ")
 
     # approach=spatially weighted regression. zero out unknown locations and use the learned coefficients at known locations to predict values
     #X0_extended = reduced_mesh.points
@@ -386,7 +444,7 @@ def run_one_iteration(datasource, curr_iter, \
     except np.linalg.LinAlgError:
         RETURN_INFO['interpolated']['swr'] = np.nan
         RUN_TIMES['swr'] = np.nan
-        if verbose: print("         >>:( ARGHHH: covariates are not linearly independent at this sample !!      ")
+        if verbose: print("         >:( Warning: covariates are not linearly independent at this sample !!      ")
 
     #===============performance metrics=================#
     metrics_to_consider = ['pearson', 'spearman', 'ssim', \

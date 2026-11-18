@@ -95,7 +95,7 @@ def interpolate_KNN(X0, Y0, x1, n_neighbours=5, power=2, timeit=False):
 initial = int(np.prod(np.asarray([len(PARAM_GRID[elem]) for elem in PARAM_GRID])))
 print(initial)
 #ran=50
-ranges = [25, 100]
+ranges = [25]
 #pct=5
 percentages = [5, 10, 25, 50]
 

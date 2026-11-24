@@ -646,10 +646,10 @@ def fit_empirical_variogram(x,D,X,smoothing=False, method = 'best', fast=True, n
 
 
 
-def _get_inverse_distance_weights(dist):
+def _get_inverse_distance_weights(dist, power):
     
     with np.errstate(divide='ignore'):
-        weights = 1. / dist
+        weights = 1. / dist ** power
     isinf = np.isinf(weights)
     infrow = np.where(isinf)
     weights[infrow] = isinf[infrow]

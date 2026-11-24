@@ -68,7 +68,7 @@ def interpolate_IDW(X0, Y0, x1, power=2, timeit=False):
 
 
 
-def interpolate_KNN(X0, Y0, x1, n_neighbours=5, timeit=False):
+def interpolate_KNN(X0, Y0, x1, n_neighbours=5, power=2, timeit=False):
     '''
     Find nearest n-many neighbours, average their values
     and weigh inversely by distance abagen-style
@@ -83,7 +83,7 @@ def interpolate_KNN(X0, Y0, x1, n_neighbours=5, timeit=False):
         
     dist, idx = tree.query(x1, k=n_neighbours)
 
-    w = helpers._get_inverse_distance_weights(dist)
+    w = helpers._get_inverse_distance_weights(dist, power)
 
     # get average of nearest neighbors
     y1 = np.sum(Y0[idx]* w, axis=1) / np.sum(w, axis = 1)

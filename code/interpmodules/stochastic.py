@@ -6,8 +6,7 @@ based on the full mesh
 
 
 import copy
-from gstools.covmodel import JBessel, Gaussian, Exponential
-from gstools.krige import Ordinary, Universal
+import gstools as gs
 from . import helpers, metrics
 from joblib import Parallel, delayed
 import matplotlib.pyplot as plt
@@ -26,7 +25,13 @@ METRICS_TO_CONSIDER =  ['pearson', 'spearman', 'ssim', \
                            'r2', 'rmse', 'kolmogorov_smirnov', \
                             'jensen_shannon']
 
-
+MODELS = {'spherical': gs.covmodel.Spherical, 
+                'exponential': gs.covmodel.Exponential,
+                'gaussian': gs.covmodel.Gaussian,
+                'cubic': gs.covmodel.Cubic,
+                'stable': gs.covmodel.Stable,
+                'matern': gs.covmodel.Matern,
+               'hole': gs.covmodel.JBessel}
 
 # Geographically-weighted regression
 # takes covariates
@@ -94,9 +99,111 @@ def interpolate_SWR(X0, Y0, Yk0, x1, yk1, bandwidth=None, spherical=True, timeit
 
     return y1_interp
 
+# variogram fitting
+def clean_variogram(h, ev, nooutlier=True):
+
+    outliers = np.array([], dtype=bool)
+    nans = np.where( np.isnan(ev) )
+
+    if nooutlier: outliers = np.where( abs(ev) > np.nanstd(ev)*5 )
+    remove = np.union1d( outliers, nans )
+
+    ev_clean = np.delete(ev, remove)
+    h_clean = np.delete(h, remove)
+
+    return h_clean, ev_clean
+
+def init_parameters(mapvals, Dist, h, ev):
+
+    nh = len(h)
+    max_ev = semivariance(np.nanmax(mapvals), np.nanmin(mapvals))
+    p0 = {
+          3: [np.max(h), np.nanmax(ev), np.nanmax(ev)/nh],
+          4: [np.max(h), np.nanmax(ev), np.nanmax(ev)/nh, ev[0]]
+         }
+    # upper bound lower bound
+    bounds = {
+        3: ([0.00001]*3,
+        [np.max(Dist), max_ev, max_ev]),
+        4: ([0.00001]*4, 
+        [np.max(Dist), max_ev, max_ev, 100])
+    }
+
+    return p0, bounds
+
+def semivariance(y1, y2):
+    return .5 * (y1 - y2)**2
+
+def _fit_gs_covmodel(X0, Y0, Dist, model = "exponential"):
+
+    h, ev, _ = helpers.get_empirical_variogram_fast(
+        x=Y0,
+        X=X0,
+        D=Dist,
+        nh=25
+        )
+    
+    p0, bounds = init_parameters(Y0, Dist, h, ev)
+
+    h_clean, ev_clean = clean_variogram(h=h, ev=ev, nooutlier=False)
+
+    mdl = MODELS[model](dim = X0.shape[1])
+
+    if model in ['stable', 'matern']:
+        in_bounds = {"len_scale": [bounds[4][0][0], bounds[4][1][0]],\
+                    "var": [bounds[4][0][1], bounds[4][1][1]],\
+                    "nugget": [bounds[4][0][2], bounds[4][1][2]],\
+                    "smoothness": [bounds[4][0][3], bounds[4][1][3]]
+                }
+        if model == 'stable':
+            in_bounds["alpha"] = [bounds[4][0][3], 2] # upper bound for alpha shape parameter set to 2 to satisfy PyKrige
+            del in_bounds["smoothness"]
+            mdl.set_arg_bounds(**in_bounds)
+            cof, cov = mdl.fit_variogram(h,ev, init_guess = {"len_scale": p0[4][0], "var": p0[4][1], "nugget": p0[4][2], "alpha": p0[4][3]}, 
+                                            max_eval = 1000)
+            
+        if model == 'matern':
+            in_bounds["nu"] = [0.2, 20] # upper bound for nu shape parameter set to 20 to satisfy PyKrige
+            del in_bounds["smoothness"]
+            mdl.set_arg_bounds(**in_bounds)
+            cof, cov = mdl.fit_variogram(h_clean, ev_clean, init_guess = {"len_scale": p0[4][0], "var": p0[4][1], "nugget": p0[4][2], "nu": p0[4][3]}, 
+                                            max_eval = 1000)
+    else:
+        in_bounds = {"len_scale": [bounds[3][0][0], bounds[3][1][0]],\
+                    "var": [bounds[3][0][1], bounds[3][1][1]],\
+                    "nugget": [bounds[3][0][2], bounds[3][1][2]]
+                }
+        
+        mdl.set_arg_bounds(**in_bounds)
+        cof, cov = mdl.fit_variogram(h_clean ,ev_clean, init_guess = {"len_scale": p0[3][0], "var": p0[3][1], "nugget": p0[3][2]}, 
+                                        max_eval = 1000)
+        
+    return MODELS[model](dim = X0.shape[1], **cof)
 
 
-def _make_a_kriger(X0, Y0, x1, yk1=None, Yk0=None, model = 'exponential', method='Ordinary', timeit=True, plotit=False, filename=None):
+def _make_a_kriger(X0, Y0, Dist, Yk0=None, model="exponential", method="Ordinary"):
+    fitted = _fit_gs_covmodel(X0=X0, Y0=Y0, Dist=Dist, model=model)
+
+    if method == "Ordinary":
+        kriger = OrdinaryKriging3D(
+            x=X0[:, 0],
+            y=X0[:, 1],
+            z=X0[:, 2],
+            val=Y0,
+            variogram_model=fitted,
+            exact_values = True
+        )
+        return kriger
+    
+    if method == 'Regression':
+        
+        kriger = RegressionKriging(variogram_model = fitted, \
+                                   coordinates_type = 'euclidean', \
+                                   method = 'ordinary3d', exact_values=True)
+        kriger.fit(p=Yk0.T, x=X0, y=Y0)
+        return kriger
+
+def _make_a_kriger_old(X0, Y0, x1, yk1=None, Yk0=None, model = 'exponential', method='Ordinary', timeit=True, plotit=False, filename=None):
     '''
     exporting variogram fitted with gkstat to gstools
 
@@ -160,7 +267,7 @@ def _make_a_kriger(X0, Y0, x1, yk1=None, Yk0=None, model = 'exponential', method
     return kriger
     
 
-def interpolate_Krige(X0, Y0, x1, yk1=None, Yk0=None, model = 'exponential', method='Ordinary', timeit=False, plotit=False, filename=None):
+def interpolate_Krige(X0, Y0, Dist, x1, yk1=None, Yk0=None, model = 'exponential', method='Ordinary', timeit=False, plotit=False, filename=None):
     '''
     wrapper for kriging modalities
     '''
@@ -179,12 +286,13 @@ def interpolate_Krige(X0, Y0, x1, yk1=None, Yk0=None, model = 'exponential', met
 
         
     t1 = time.time()
-    try:
-        kriger = _make_a_kriger(X0, Y0, x1, yk1=yk1, Yk0=Yk0, model = model, method=method, timeit=timeit, plotit=plotit, filename=filename)
-    except (ValueError, RuntimeError) as e:
-        y1, error = np.nan, np.nan
-        print(f"       >:(  00PS: could not fit a positive-variance {model} model !!       ")
-        return y1, error
+    kriger = _make_a_kriger(
+        X0=X0,
+        Y0=Y0,
+        Dist=Dist,
+        Yk0=Yk0,
+        model = model,
+        method=method)
         
     if method == 'Regression':
 

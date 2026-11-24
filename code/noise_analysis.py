@@ -2,6 +2,11 @@
 Evaluate noise
 '''
 
+# take noise level as the argument
+import sys
+if __name__ == "__main__":
+    sigma = int(sys.argv[1])
+
 from config import *
 import copy
 from figs_config import *
@@ -10,6 +15,7 @@ import itertools
 import joblib
 import matplotlib.pyplot as plt
 from math import sqrt
+from noise_helpers import *
 import numpy as np
 import pandas as pd
 import pyvista as pv
@@ -20,110 +26,26 @@ from scipy.stats import zscore
 import seaborn as sns
 from sklearn.metrics import root_mean_squared_error
 
-NOISE_LEVELS = [1, 5, 10, 15, 20, 50]
-
-#--------helper functions--------#
-
-#====for making noise====#
-def white(mesh, seed = 321):
-    from numpy.random import default_rng
-
-    rng = default_rng(seed)
-    w = rng.normal(loc=0, scale=1, size=mesh.n_points)
-    return w
-
-def gaussian_blur_point_data(mesh, values, sigma, radius=None):
-    """
-    blur noise
-    """
-
-    if radius is None:
-        radius = 3.0 * sigma
-
-    points = np.asarray(mesh.points)
-    tree = cKDTree(points)
-    neighbourhoods = tree.query_ball_point(points, radius)
-
-    smoothed = np.zeros(values.shape)
-
-    # calculate gaussian weighted average
-    for i, neighbours in enumerate(neighbourhoods):
-
-        neighbours = np.asarray(neighbours)
-        distances = np.linalg.norm(
-            points[neighbours] - points[i],
-            axis=1
-        )
-        weights = np.exp(
-            -0.5 * (distances / sigma) ** 2
-        )
-        weights /= weights.sum()
-        smoothed[i] = np.tensordot(
-            weights,
-            values[neighbours],
-            axes=(0, 0)
-        )
-
-    return smoothed
-
-def make_some_noise(mesh, sigma):
-    '''
-    sigma being how much blur
-    '''
-    W = white(mesh)
-    blurred_noise = gaussian_blur_point_data(
-        mesh = mesh,
-        values = W,
-        sigma = sigma
-        )
-    return blurred_noise
-
-#====for cross-validation====#
-def get_cv_splits(coords, nfolds=5, rseed=321):
-
-    np.random.seed(rseed)
-    ncoords = coords.shape[0]
-
-    n_test = int( 1/nfolds * ncoords )
-    cv_test_samples = []
-
-    available_ind = np.arange(ncoords)
-
-    for ind in range(nfolds):
-        if ind == nfolds - 1:
-            cv_test_samples.append(available)
-            break
-
-        random_sample = np.random.choice(available_ind, size = n_test, replace=False)
-        cv_test_samples.append(random_sample)
-        available = np.setdiff1d(available_ind, random_sample)
-
-    
-    cv_test_inds = cv_test_samples
-    cv_test_coords = tuple( [ coords[test_vert_set,:] for test_vert_set in cv_test_inds ] )
-    cv_train_inds= tuple( [ np.setdiff1d(np.arange(ncoords), test_vert_set) for test_vert_set in cv_test_inds] )
-    cv_train_coords = tuple( [ coords[train_vert_set, :] for train_vert_set in cv_train_inds] )
-    return cv_train_coords, cv_train_inds, cv_test_coords, cv_test_inds
-
-#====for step 2 of KNN parameter selection====#
-def indices_from_radial_nb(i, j, size=100):
-    from math import sqrt
-    radius = int( 0.5 * (sqrt(size) - 1))
-
-    i_s = [ i + row_dist for row_dist in np.linspace(-radius, radius, 2*radius+1) ]
-    j_s = [ j + col_dist for col_dist in np.linspace(-radius, radius, 2*radius+1) ]
-
-    return i_s, j_s
-
 
 #--------set up GRF plus noise--------#
+NOISE_LEVELS = [1, 5, 10, 15, 20, 50]
+
 sphere_mesh = joblib.load(projdir + "/data/fsLR-4k_sphere_grf.pkl")
 
 ranges = [25, 50, 75, 100]
 
+plot=False
+idw=True
+knn=True
+rbf=True
+ordinary=True
+regkrige=True
+swr=True
+run_stochastic=ordinary or regkrige or swr
+need_covariates = regkrige or swr
+
 
 #-------visualization--------#
-plot = False
 if plot:
     pl = pv.Plotter(shape = (len(ranges) + 1, len(NOISE_LEVELS) + 1), window_size = ((len(NOISE_LEVELS) + 1)*400, (len(ranges) + 1) * 400))
 
@@ -163,6 +85,7 @@ if plot:
 
 
 #--------run--------#
+
 ran=50
 pct=5
 verbose=1
@@ -184,12 +107,14 @@ PARAM_GRID = {
 sampl = joblib.load(projdir + f'/data/sampling/fsLR-4k_sphere_samp-fibonacci_pct-{pct}.pkl')
 kc, kv, uc, uv = sampl[1]
 
-data = zscore(sphere_mesh[str(ran)])
+original = zscore(sphere_mesh[str(ran)])
+noise = zscore(make_some_noise(sphere_mesh, sigma))
+data = zscore(original + noise)
 
 sparse_coords = kc[:, :, 0]
 sparse_data = np.asarray(data[kv.flatten().astype(int)])
 test_coords = uc[:, :, 0]
-test_data = np.asarray(data[uv.flatten().astype(int)])
+test_data = np.asarray(original[uv.flatten().astype(int)])
 
 nfolds = 10
 
@@ -198,7 +123,6 @@ cv_kc, cv_ki, cv_uc, cv_ui = get_cv_splits(sparse_coords, nfolds = nfolds, rseed
 SCORES = dict.fromkeys(approaches)
 PREDS = dict.fromkeys(approaches)
 
-idw=False
 if idw:
     #--------idw--------#
     # cv-chosen power (grid search)
@@ -261,6 +185,7 @@ if idw:
     full_map[kv.flatten().astype(int)] = sparse_data
     full_map[uv.flatten().astype(int)] = y1
 
+    PREDS["idw"] = full_map
     SCORES["idw"] = root_mean_squared_error(
         y_true = test_data,
         y_pred = y1
@@ -271,7 +196,6 @@ if idw:
         f"with NRMSE score {SCORES['idw']:.5f} (same as {((1 - (SCORES['idw'])**2) * 100):.2f}% variance explained)")
 
 #--------knn--------#
-knn=False
 if knn:
     # cv-chosen power and neighbours (random then narrow search)
     if verbose: print("--------Starting KNN interpolation--------")
@@ -341,8 +265,8 @@ if knn:
         select_n_j, closest_many)
 
     for eval_i, eval_j in itertools.product(eval_i_s, eval_j_s):
-        eval_i = int(eval_i)
-        eval_j = int(eval_j)
+        eval_i = int(eval_i) % len(PARAM_GRID["power"])
+        eval_j = int(eval_j) % len(PARAM_GRID["n_neighbours"])
 
         for ind in range(nfolds):
 
@@ -386,6 +310,8 @@ if knn:
     full_map[kv.flatten().astype(int)] = sparse_data
     full_map[uv.flatten().astype(int)] = y1
 
+    PREDS["knn"] = full_map
+
     SCORES["knn"] = root_mean_squared_error(
         y_true = test_data,
         y_pred = y1
@@ -397,7 +323,6 @@ if knn:
         )
 
 #--------rbf--------#
-rbf=True
 if rbf:
     if verbose: print("--------Starting RBF interpolation--------")
 
@@ -433,7 +358,6 @@ if rbf:
 
                 try:
                     cv_pred = interp(**args)
-                    if verbose: print(cv_pred)
                     cv_true = sparse_data[cv_ui[ind].flatten().astype(int)]
 
                     nrmse_cv = root_mean_squared_error(
@@ -469,8 +393,8 @@ if rbf:
         select_n_j, closest_many)
 
     for eval_i, eval_j in itertools.product(eval_i_s, eval_j_s):
-        eval_i = int(eval_i)
-        eval_j = int(eval_j)
+        eval_i = int(eval_i) % len(PARAM_GRID["kernel"])
+        eval_j = int(eval_j) % len(PARAM_GRID["n_neighbours"])
 
         for ind in range(nfolds):
 
@@ -479,17 +403,19 @@ if rbf:
                 "x1": cv_uc[ind],
                 "kernel": PARAM_GRID["kernel"][eval_i],
                 "n_neighbours": PARAM_GRID["n_neighbours"][eval_j]}
-            
-            cv_pred = interp(**args)
+            try:
+                cv_pred = interp(**args)
+             
+                cv_true = sparse_data[cv_ui[ind].flatten().astype(int)]
 
-            cv_true = sparse_data[cv_ui[ind].flatten().astype(int)]
-
-            nrmse_cv = root_mean_squared_error(
-                y_true = cv_true,
-                y_pred=cv_pred
-                ) / np.nanstd(cv_true)
-            
-            nrmse[eval_i, eval_j, ind] = nrmse_cv
+                nrmse_cv = root_mean_squared_error(
+                    y_true = cv_true,
+                    y_pred=cv_pred
+                    ) / np.nanstd(cv_true)
+                
+                nrmse[eval_i, eval_j, ind] = nrmse_cv
+            except ValueError:
+                nrmse[eval_i, eval_j, ind] = np.nan
 
         score = np.nanmean(nrmse[eval_i, eval_j, :])
         Nrmse[eval_i, eval_j] = score
@@ -501,28 +427,6 @@ if rbf:
             PARAM_GRID["n_neighbours"][eval_j]
             )
 
-    update_args = {
-        "X0": sparse_coords,
-        "Y0": sparse_data,
-        "x1": test_coords,
-        "kernel": best_params[0],
-        "n_neighbours": best_params[1]
-        }
-
-    y1 = interp(**update_args)
-    full_map = np.zeros(sphere_mesh.n_points)
-    full_map[kv.flatten().astype(int)] = sparse_data
-    full_map[uv.flatten().astype(int)] = y1
-
-    SCORES["rbf"] = root_mean_squared_error(
-        y_true = test_data,
-        y_pred = y1
-        ) / np.nanstd(test_data)
-
-    if verbose: print(
-        f"RBF (power={best_params[0]}, n_nbs={best_params[1]}) completed with \n" + 
-        f"NRMSE score {SCORES['rbf']:.5f} (same as {((1 - (SCORES['rbf'])**2) * 100):.2f}% variance explained)"
-        )
 
     exhaustive=False
     if exhaustive:
@@ -559,31 +463,33 @@ if rbf:
                     PARAM_GRID["n_neighbours"][j]
                     )
 
-        update_args = {
-            "X0": sparse_coords,
-            "Y0": sparse_data,
-            "x1": test_coords,
-            "kernel": best_params[0],
-            "n_neighbours": best_params[1]
-            }
+    update_args = {
+        "X0": sparse_coords,
+        "Y0": sparse_data,
+        "x1": test_coords,
+        "kernel": best_params[0],
+        "n_neighbours": best_params[1]
+        }
 
-        y1 = interp(**update_args)
-        full_map = np.zeros(sphere_mesh.n_points)
-        full_map[kv.flatten().astype(int)] = sparse_data
-        full_map[uv.flatten().astype(int)] = y1
+    y1 = interp(**update_args)
+    full_map = np.zeros(sphere_mesh.n_points)
+    full_map[kv.flatten().astype(int)] = sparse_data
+    full_map[uv.flatten().astype(int)] = y1
 
-        SCORES["rbf"] = root_mean_squared_error(
-            y_true = test_data,
-            y_pred = y1
-            ) / np.nanstd(test_data)
+    PREDS["rbf"] = full_map
+    SCORES["rbf"] = root_mean_squared_error(
+        y_true = test_data,
+        y_pred = y1
+        ) / np.nanstd(test_data)
 
-        if verbose: print(
-            f"RBF ({best_params[0]}, n_nbs={best_params[1]}) completed with \n" + 
-            f"NRMSE score {SCORES['rbf']:.5f} (same as {((1 - (SCORES['rbf'])**2) * 100):.2f}% variance explained)"
-            )
+    if verbose: print(
+        f"RBF ({best_params[0]}, n_nbs={best_params[1]}) completed with \n" + 
+        f"NRMSE score {SCORES['rbf']:.5f} (same as {((1 - (SCORES['rbf'])**2) * 100):.2f}% variance explained)"
+        )
 
-stochastic=False
-if stochastic:
+if run_stochastic:
+    Dist = helpers.internal_distance_matrix(sphere_mesh.points)
+if ordinary:
     #--------krige--------#
     # gaussian variogram - because we know that's how the data was made
     if verbose: print("--------Starting OK interpolation--------")
@@ -592,6 +498,7 @@ if stochastic:
         X0=sparse_coords,
         Y0=sparse_data,
         x1=test_coords,
+        Dist=Dist,
         model = 'gaussian',
         method='Ordinary')
 
@@ -599,6 +506,7 @@ if stochastic:
     full_map[kv.flatten().astype(int)] = sparse_data
     full_map[uv.flatten().astype(int)] = y1
 
+    PREDS["ok"] = full_map
     SCORES["ok"] = root_mean_squared_error(
         y_true = test_data,
         y_pred = y1
@@ -609,21 +517,25 @@ if stochastic:
         f"NRMSE score {SCORES['ok']:.5f} (same as {((1 - (SCORES['ok'])**2) * 100):.2f}% variance explained)"
         )
 
-    #--------regression kriging--------#
-    if verbose: print("--------Starting RK interpolation--------")
-    # choose 1-5 covariates
-    Yk0, yk1 = generate_covariates(
-        curr_map=ran,
+if need_covariates:
+    Yk,_ = generate_covariates(
+        curr_map=str(ran),
         src_polydata=sphere_mesh,
         trg_polydata=sphere_mesh,
         nspins=1000, datasource='grf')
 
+if regkrige:
+    #--------regression kriging--------#
+    if verbose: print("--------Starting RK interpolation--------")
+    # choose 1-5 covariates
+    
     y1, _ = stochastic.interpolate_Krige(
             X0=sparse_coords,
             Y0=sparse_data,
+            Dist=Dist,
             x1=test_coords,
-            Yk0=Yk0,
-            yk1=yk1,
+            Yk0=Yk[:, kv.flatten().astype(int)],
+            yk1=Yk[:, uv.flatten().astype(int)],
             model = 'gaussian',
             method='Regression')
     
@@ -636,20 +548,29 @@ if stochastic:
         y_pred = y1
         ) / np.nanstd(test_data)
 
+    PREDS["rk"] = full_map
     if verbose: print(
         f"RK (gaussian) completed with \n" + 
         f"NRMSE score {SCORES['rk']:.5f} (same as {((1 - (SCORES['rk'])**2) * 100):.2f}% variance explained)"
         )
 
+if swr:
     #--------swr--------#
+    if verbose: print("--------Starting SWR interpolation--------")
     # choose 1-5 covariates
     y1 = stochastic.interpolate_SWR(
         X0=sparse_coords,
         Y0=sparse_data,
-        Yk0=Yk0,
+        Yk0=Yk[:, kv.flatten().astype(int)],
         x1=test_coords,
-        yk1=yk1
+        yk1=Yk[:, uv.flatten().astype(int)]
     )
+
+    full_map = np.zeros(sphere_mesh.n_points)
+    full_map[kv.flatten().astype(int)] = sparse_data
+    full_map[uv.flatten().astype(int)] = y1
+
+    PREDS["swr"] = full_map
     SCORES["swr"] = root_mean_squared_error(
             y_true = test_data,
             y_pred = y1
@@ -659,4 +580,6 @@ if stochastic:
         f"SWR completed with \n" + 
         f"NRMSE score {SCORES['swr']:.5f} (same as {((1 - (SCORES['swr'])**2) * 100):.2f}% variance explained)"
         )
-    #--------compile scores--------#
+#--------compile scores--------#
+joblib.dump(SCORES, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_scores.pkl")
+joblib.dump(PREDS, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_preds.pkl")

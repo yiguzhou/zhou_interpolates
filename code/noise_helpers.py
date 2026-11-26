@@ -11,6 +11,50 @@ NOISE_LEVELS = [1, 5, 10, 15, 20, 50]
 
 #--------helper functions--------#
 
+#====for making nonstationary maps====#
+def linear_scaling(x0, lims0, lims1):
+
+    x1 = lims1[0] + (np.asarray(x0) - lims0[0]) * (lims1[1] - lims1[0]) / (lims0[1] - lims0[0])
+    
+    return x1
+
+def gaussian_gradual_blur(mesh, values, sigma_i):
+    """
+    uneven blurring
+    """
+
+    radius = np.max(mesh.points) * 2
+
+    points = np.asarray(mesh.points)
+    tree = cKDTree(points)
+    neighborhoods = tree.query_ball_point(points, radius)
+
+    smoothed = np.zeros(values.shape)
+
+    # calculate gaussian weighted average
+    for i, neighbors in enumerate(neighborhoods):
+
+        sigma = linear_scaling(points[i][0], [-100,100], [1,20])
+        print(sigma)
+
+        neighbors = np.asarray(neighbors)
+        distances = np.linalg.norm(
+            points[neighbors] - points[i],
+            axis=1
+        )
+        weights = np.exp(
+            -0.5 * (distances / sigma) ** 2
+        )
+        weights /= weights.sum()
+        smoothed[i] = np.tensordot(
+            weights,
+            values[neighbors],
+            axes=(0, 0)
+        )
+
+    return smoothed
+
+
 #====for making noise====#
 def white(mesh, seed = 321):
     from numpy.random import default_rng

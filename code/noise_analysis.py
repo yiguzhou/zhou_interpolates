@@ -89,7 +89,11 @@ if plot:
 ran=50
 pct=5
 verbose=1
-no_noise = True
+no_noise = False
+non_stationary = True
+noisetype = "stationary"
+if non_stationary: noisetype = "ns"
+
 
 PARAM_GRID = {
     "kernel": np.asarray([
@@ -113,6 +117,13 @@ noise = zscore(make_some_noise(sphere_mesh, sigma))
 if no_noise:
     noise = np.zeros(sphere_mesh.n_points)
     sigma=0
+
+if non_stationary:
+    x_s = sphere_mesh.points[:, 0]
+    sigma_i = linear_scaling(x_s, [-100, 100], [1, 20])
+    ns = gaussian_gradual_blur(sphere_mesh, noise, sigma_i)
+    noise = zscore(ns)
+
 data = zscore(original + noise)
 
 sparse_coords = kc[:, :, 0]
@@ -585,5 +596,5 @@ if swr:
         f"NRMSE score {SCORES['swr']:.5f} (same as {((1 - (SCORES['swr'])**2) * 100):.2f}% variance explained)"
         )
 #--------compile scores--------#
-joblib.dump(SCORES, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_scores.pkl")
-joblib.dump(PREDS, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_preds.pkl")
+joblib.dump(SCORES, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_{noisetype}_scores.pkl")
+joblib.dump(PREDS, projdir + f"/results/rev_{ran}mm_{pct}pct_sigma{sigma}noise_{noisetype}_preds.pkl")

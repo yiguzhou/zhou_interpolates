@@ -89,6 +89,7 @@ if plot:
 ran=50
 pct=5
 verbose=1
+no_noise = True
 
 PARAM_GRID = {
     "kernel": np.asarray([
@@ -109,6 +110,9 @@ kc, kv, uc, uv = sampl[1]
 
 original = zscore(sphere_mesh[str(ran)])
 noise = zscore(make_some_noise(sphere_mesh, sigma))
+if no_noise:
+    noise = np.zeros(sphere_mesh.n_points)
+    sigma=0
 data = zscore(original + noise)
 
 sparse_coords = kc[:, :, 0]

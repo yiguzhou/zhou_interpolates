@@ -10,7 +10,7 @@ outdir = projdir + '/results/'
 
 template = 'fsLR-4k'
 
-approaches = ['idw', 'knn', 'rbf', 'swr', 'krige', 'regkrige']
+approaches = ['idw', 'knn', 'rbf', 'swr', 'ok', 'rk']
 
 test_strategies = ['fibonacci', 'random', 'focaldiffuse']
 test_percentages = [5, 10, 25, 50]

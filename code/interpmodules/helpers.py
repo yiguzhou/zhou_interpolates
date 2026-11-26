@@ -644,8 +644,6 @@ def fit_empirical_variogram(x,D,X,smoothing=False, method = 'best', fast=True, n
     
     return global_spatial_info
 
-
-
 def _get_inverse_distance_weights(dist, power):
     
     with np.errstate(divide='ignore'):
@@ -655,8 +653,6 @@ def _get_inverse_distance_weights(dist, power):
     weights[infrow] = isinf[infrow]
 
     return weights
-
-
 
 def _local_cdist(coords_i, coords, rho):
     """
@@ -672,16 +668,12 @@ def _local_cdist(coords_i, coords, rho):
     R = rho
     return R * c
 
-
-
 def gii_to_polydata(gii_data):
     '''
     load a gifti to a polydata for pyvista
     '''
     verts, faces = gii_data
     return pv.PolyData(verts, np.c_[np.ones((faces.shape[0],),dtype = int)*3, faces])
-
-
 
 def make_random_maps(ran, mesh, seed):
     
@@ -693,7 +685,6 @@ def make_random_maps(ran, mesh, seed):
 
     return random_map
 
-
 def _coords_icosahedron_to_perfect_sphere(vertices, radius=1.0):
     '''
     project (x,y,z) coordinates at vertices sampled from a icosahedron
@@ -702,7 +693,6 @@ def _coords_icosahedron_to_perfect_sphere(vertices, radius=1.0):
     norms = np.linalg.norm(vertices, axis=1, keepdims=True)
     return radius * vertices / norms
     
-
 def _generate_fibonacci_sphere(n_points, rho):
     phi = np.pi * (3. - np.sqrt(5.))  # golden angle
     points = []
@@ -717,8 +707,6 @@ def _generate_fibonacci_sphere(n_points, rho):
         points.append((x * rho, y * rho, z * rho)) # scale
 
     return np.array(points)
-
-
 
 def _get_expected_voronoi_area(n_points, rho=100):
     '''

@@ -53,9 +53,10 @@ def slerp(p0, p1, num=10):
 
 #--------setting up--------#
 sphere_mesh = joblib.load(projdir + "/data/fsLR-4k_sphere_grf.pkl")
-focal=False
-plot=False
-verbose=True
+focal = False
+focal_diffuse = True
+plot = True
+verbose = True
 
 #--------focal sampling--------#
 D = helpers.internal_distance_matrix(sphere_mesh.points)
@@ -165,50 +166,98 @@ if focal:
 
 
 #--------focal-diffuse sampling--------#
-n = 2
+if focal_diffuse:
 
-# evenly distribute the neighbours among centroid points
-# overlap neighbourhoods
-# centroids for the foci
-centroids = []
-for _ in range(n):
-    centroids.append(random.randint(0, sphere_mesh.n_points))
+    focal_diffuse_samples = dict.fromkeys(n_foci)
 
-centroids_coords = [ sphere_mesh.points[centroid] for centroid in centroids ]
+    centroids = []
+    centroids_coords = []
 
-print(centroids)
-print(centroids_coords)
+    n_foci = [1, 2, 3]
+    for n in n_foci:
+        # evenly distribute the neighbours among centroid points
+        # overlap neighbourhoods
+        # centroids for the foci
+
+        centroid = random.randint(0, sphere_mesh.n_points)
+        centroids.append(centroid)
+
+        centroids_coords.append(sphere_mesh.points[centroid])
+
+        neighbours = dict.fromkeys(centroids)
+        weights = dict.fromkeys(centroids)
+        probabilities = dict.fromkeys(centroids)
+        n_neighbours = n_goal // n
+        print(centroids_coords)
 
 
-neighbours = dict.fromkeys(centroids)
-weights = dict.fromkeys(centroids)
-probabilities = dict.fromkeys(centroids)
-n_neighbours = n_goal // n
+        for i in range(n):
+            _, nbs = tree.query(x=centroids_coords[i], k=sphere_mesh.n_points - 1)
+            neighbours[centroids[i]] = nbs
+            weights[centroids[i]] = gaussian_sphere(sphere_mesh.points, centroids_coords[i], .5)
+            probabilities[centroids[i]] = weights[centroids[i]] / np.sum(weights[centroids[i]])
 
+        new_array = np.zeros(n_goal)
 
-for i in range(n):
-    _, nbs = tree.query(x=centroids_coords[i], k=sphere_mesh.n_points - 1)
-    neighbours[centroids[i]] = nbs
-    weights[centroids[i]] = gaussian_sphere(sphere_mesh.points, centroids_coords[i], .5)
-    print(weights[centroids[i]].shape)
-    probabilities[centroids[i]] = weights[centroids[i]] / np.sum(weights[centroids[i]])
+        n_combined = 0
 
-print(probabilities[centroids[0]].shape)
-new_array = np.zeros(n_goal)
+        sample_count = n_goal // n
 
-n_combined = 0
+        while n_combined != n_goal:
 
-sample_count = n_goal
+            if sample_count > sphere_mesh.n_points: 
+                centroids[n - 1] = random.randint(0, sphere_mesh.n_points) # sample another one
+                sample_count = n_goal // n
+                print(f"replace centroid # {n}")
 
-while n_combined != n_goal:
+                
 
-    sampled_indices = [ np.random.choice(sphere_mesh.n_points, size=sample_count, \
-                                         replace=False, p=probabilities[centroids[i]]) for i in range(n) ]
+            sampled_indices = [ np.random.choice(sphere_mesh.n_points, size=sample_count, \
+                                                replace=False, p=probabilities[centroids[i]]) for i in range(n) ]
 
-    combined = np.unique(np.concatenate(sampled_indices, 0))
-    n_combined = combined.shape[0]
+            combined = np.unique(np.concatenate(sampled_indices, 0))
+            n_combined = combined.shape[0]
 
-    new_array = combined
-    sample_count -= 1
+            new_array = combined
+            sample_count += 1
 
-print(new_array.shape)
+        fv = new_array
+        fc = sphere_mesh.points[new_array.astype(int)]
+        print(fv.shape)
+        focal_diffuse_samples[n] = fv, fc
+
+    #====voronoi area====#
+    perfect_sphere = pv.Sphere(radius=1.0, theta_resolution=60, phi_resolution=60)
+
+    if plot:
+        pv.global_theme.allow_empty_mesh = True
+        pl = pv.Plotter(shape = (1, len(n_foci)), window_size = (400 * len(n_foci), 400))
+
+        for fi, n in enumerate(n_foci):
+
+            fv, fc = focal_diffuse_samples[n]
+            perfect_points = _coords_icosahedron_to_perfect_sphere(vertices=fc, radius=1)
+            #sv = SphericalVoronoi(perfect_points)
+            #sv.sort_vertices_of_regions()
+
+            pl.subplot(0, fi)
+            pl.add_points(
+            perfect_points,
+            point_size=10,
+            scalars = sphere_mesh["50"][fv],
+            cmap = bpr,
+            **point_aes)
+
+            pl.add_mesh(perfect_sphere, color="k", opacity=0.7, smooth_shading=True)
+            pl.add_text(f"{str(n)} foci", font_size = 10, font = "courier", position = "lower_edge")
+            # Add Voronoi edges as spherical arcs
+            #for region in sv.regions:
+            #    verts = sv.vertices[region]
+            #    for i in range(len(verts)):
+            #        j = (i + 1) % len(verts)
+            #        arc = slerp(verts[i], verts[j], num=20)
+            #        line = pv.lines_from_points(arc)
+            #        pl.add_mesh(line, color="white", line_width=2)
+
+            pl.camera_position="yz"
+        pl.show(jupyter_backend='static')

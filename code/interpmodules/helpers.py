@@ -275,10 +275,12 @@ def get_training_set(mesh, sphere, pct_split, n_iters, parcellation_name=None, m
 
         tree = KDTree(sphere.points)
 
-        parcellated = mesh[parcellation_name]
+        if parcellation_name is not None:
+        
+            parcellated = mesh[parcellation_name]
 
-        rel_size = np.unique(parcellated, return_counts=True)[1] / nvtx # relative size for each parcel
-        sample_counts = np.ceil(rel_size * n_train) # rounds to nearest integer
+            rel_size = np.unique(parcellated, return_counts=True)[1] / nvtx # relative size for each parcel
+            sample_counts = np.ceil(rel_size * n_train) # rounds to nearest integer
 
         
 
@@ -288,17 +290,15 @@ def get_training_set(mesh, sphere, pct_split, n_iters, parcellation_name=None, m
 
             for fi,focus in enumerate(sphere_foci):
 
-                parcel_verts = np.where(parcellated == fi)[0]
-                
-                neighbours = tree.query(x = focus, k = parcel_verts.shape[0]) 
+                if parcellation_name is not None:
+                    parcel_verts = np.where(parcellated == fi)[0]
+                    whole_brain_weights = gaussian_sphere(sphere.points, focus, .5)
+                    in_parcel_weights = whole_brain_weights[parcel_verts]
 
-                whole_brain_weights = gaussian_sphere(sphere.points, focus, .5)
-                in_parcel_weights = whole_brain_weights[parcel_verts]
-
-                in_parcel_probabilities = in_parcel_weights / in_parcel_weights.sum()
+                    in_parcel_probabilities = in_parcel_weights / in_parcel_weights.sum()
 
 
-                sampled_verts.append( np.random.choice(parcel_verts, size=round(sample_counts[fi]), \
+                    sampled_verts.append( np.random.choice(parcel_verts, size=round(sample_counts[fi]), \
                                                         replace=False, p=in_parcel_probabilities) )
 
             combined = np.unique(np.concatenate(sampled_verts, 0))[:int(n_train)]
